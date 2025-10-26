@@ -19,7 +19,7 @@ pip install -r requirements.txt
 
 ## 配置说明
 
-1. 复制 `config.json` 文件并填入你的信息：
+1. 配置GitHub并填入信息到`config.json`中 ：
 
 ```json
 {
