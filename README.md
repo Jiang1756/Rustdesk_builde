@@ -2,12 +2,12 @@
 
 这是一个用于自动化编译 RustDesk 客户端的 Python 工具，可以自动修改服务器地址和公钥，并触发 GitHub Actions 进行编译。
 
-## 功能特性
+## 功能
 
 - 自动克隆 rustdesk 和 hbb_common 仓库
 - 修改服务器地址和公钥配置
+- 修改子模块
 - 自动创建 GitHub 仓库并推送代码
-- 管理 Git 子模块
 - 设置 GitHub Actions 权限
 - 创建版本标签触发自动编译
 
