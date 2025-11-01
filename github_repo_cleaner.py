@@ -8,6 +8,7 @@ GitHub 仓库批量删除工具
 版本: 1.0.0
 """
 
+import atexit
 import os
 import re
 import json
@@ -16,7 +17,8 @@ import logging
 import sys
 import argparse
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict
+
 import requests
 from requests.auth import HTTPBasicAuth
 
@@ -76,6 +78,11 @@ class GitHubRepoCleaner:
             })
         else:
             raise ValueError("请在配置文件中设置 GitHub 认证信息（Token 或用户名密码）")
+    
+    def _request(self, method: str, url: str, **kwargs) -> requests.Response:
+        """为所有网络请求提供统一的超时设置"""
+        timeout = kwargs.pop('timeout', 30)
+        return self.session.request(method, url, timeout=timeout, **kwargs)
     
     def load_config(self) -> Dict:
         """加载配置文件"""
@@ -186,8 +193,25 @@ class GitHubRepoCleaner:
         # 配置 logger
         self.logger = logging.getLogger('GitHubRepoCleaner')
         self.logger.setLevel(log_level)
+        
+        # 清理旧处理器，避免重复输出
+        for handler in list(self.logger.handlers):
+            self.logger.removeHandler(handler)
+            handler.close()
+        
         self.logger.addHandler(console_handler)
         self.logger.addHandler(file_handler)
+        self._log_handlers = [console_handler, file_handler]
+        atexit.register(self._shutdown_logging)
+    
+    def _shutdown_logging(self):
+        """确保退出时释放日志文件句柄"""
+        for handler in getattr(self, "_log_handlers", []):
+            try:
+                handler.flush()
+            finally:
+                handler.close()
+        self._log_handlers = []
     
     def get_user_repositories(self) -> List[Dict]:
         """获取用户的所有仓库"""
@@ -207,7 +231,7 @@ class GitHubRepoCleaner:
                     'direction': 'desc'
                 }
                 
-                response = self.session.get(url, params=params)
+                response = self._request("get", url, params=params)
                 response.raise_for_status()
                 
                 # 确保响应编码正确
@@ -301,7 +325,7 @@ class GitHubRepoCleaner:
         
         try:
             url = f"https://api.github.com/repos/{owner}/{repo_name}"
-            response = self.session.delete(url)
+            response = self._request("delete", url)
             
             if response.status_code == 204:
                 self.logger.info(f"成功删除仓库: {owner}/{repo_name}")

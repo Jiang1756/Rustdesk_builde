@@ -7,13 +7,15 @@ RustDesk 自动化编译工具
 
 import os
 import re
-import git
 import json
-import requests
+import shutil
+import logging
 import subprocess
 from datetime import datetime
-from typing import Optional, Dict, Any
-import logging
+from typing import Dict, Any, Iterable
+
+import git
+import requests
 
 # 配置日志
 logging.basicConfig(
@@ -53,6 +55,37 @@ class RustDeskAutoBuild:
         self.work_dir = os.path.join(os.getcwd(), "rustdesk_build_workspace")
         self.rustdesk_dir = os.path.join(self.work_dir, "rustdesk")
         self.hbb_common_dir = os.path.join(self.work_dir, "hbb_common")
+
+    def _request(
+        self,
+        method: str,
+        url: str,
+        expected_status: Iterable[int],
+        **kwargs: Any
+    ) -> requests.Response:
+        """统一处理 GitHub API 请求和错误日志"""
+        expected = tuple(expected_status)
+        timeout = kwargs.pop("timeout", 30)
+        kwargs.setdefault("headers", self.headers)
+
+        response = requests.request(method, url, timeout=timeout, **kwargs)
+        if response.status_code not in expected:
+            logger.error(
+                "GitHub API 请求失败: %s %s -> %s %s",
+                method.upper(),
+                url,
+                response.status_code,
+                response.text,
+            )
+            raise Exception(f"GitHub API 请求失败: {response.text}")
+        return response
+
+    @staticmethod
+    def _remove_directory(path: str):
+        """在存在时安全删除目录"""
+        if os.path.exists(path):
+            logger.info("删除已存在的目录: %s", path)
+            shutil.rmtree(path, ignore_errors=True)
         
     def load_config(self, config_file: str) -> Dict[str, Any]:
         """加载配置文件"""
@@ -68,11 +101,8 @@ class RustDeskAutoBuild:
     
     def setup_workspace(self):
         """设置工作目录"""
-        if not os.path.exists(self.work_dir):
-            os.makedirs(self.work_dir)
-            logger.info(f"创建工作目录: {self.work_dir}")
-        os.chdir(self.work_dir)
-        logger.info(f"切换到工作目录: {self.work_dir}")
+        os.makedirs(self.work_dir, exist_ok=True)
+        logger.info(f"工作目录已就绪: {self.work_dir}")
         
         # 配置 Git 用户信息
         self.setup_git_config()
@@ -94,18 +124,12 @@ class RustDeskAutoBuild:
         logger.info("开始克隆仓库...")
         
         # 克隆 hbb_common
-        if os.path.exists(self.hbb_common_dir):
-            logger.info("hbb_common 目录已存在，删除后重新克隆")
-            subprocess.run(['rmdir', '/s', '/q', self.hbb_common_dir], shell=True, check=False)
-        
+        self._remove_directory(self.hbb_common_dir)
         logger.info("克隆 hbb_common 仓库...")
         git.Repo.clone_from("https://github.com/rustdesk/hbb_common.git", self.hbb_common_dir)
         
         # 克隆 rustdesk
-        if os.path.exists(self.rustdesk_dir):
-            logger.info("rustdesk 目录已存在，删除后重新克隆")
-            subprocess.run(['rmdir', '/s', '/q', self.rustdesk_dir], shell=True, check=False)
-        
+        self._remove_directory(self.rustdesk_dir)
         logger.info("克隆 rustdesk 仓库...")
         git.Repo.clone_from("https://github.com/rustdesk/rustdesk.git", self.rustdesk_dir)
         
@@ -161,16 +185,10 @@ class RustDeskAutoBuild:
             "private": False,
             "auto_init": False
         }
-        
-        response = requests.post(url, headers=self.headers, json=data)
-        
-        if response.status_code == 201:
-            repo_info = response.json()
-            logger.info(f"仓库创建成功: {repo_info['html_url']}")
-            return repo_info['clone_url']
-        else:
-            logger.error(f"创建仓库失败: {response.status_code} - {response.text}")
-            raise Exception(f"创建仓库失败: {response.text}")
+        response = self._request("post", url, (201,), json=data)
+        repo_info = response.json()
+        logger.info(f"仓库创建成功: {repo_info['html_url']}")
+        return repo_info['clone_url']
     
     def push_to_github(self, local_repo_path: str, remote_url: str):
         """推送本地仓库到 GitHub"""
@@ -197,7 +215,6 @@ class RustDeskAutoBuild:
         """更新 rustdesk 仓库的 hbb_common 子模块"""
         logger.info("更新 rustdesk 子模块...")
         
-        os.chdir(self.rustdesk_dir)
         repo = git.Repo(self.rustdesk_dir)
         
         # 删除现有子模块
@@ -280,9 +297,10 @@ class RustDeskAutoBuild:
             "allowed_actions": "all"
         }
         
-        response = requests.put(url, headers=self.headers, json=data)
-        if response.status_code not in [200, 204]:
-            logger.warning(f"设置 Actions 权限失败: {response.status_code}")
+        try:
+            self._request("put", url, (200, 204), json=data)
+        except Exception as exc:
+            logger.warning(f"设置 Actions 权限失败: {exc}")
         
         # 设置工作流权限
         url = f"{self.github_api_base}/repos/{self.github_username}/{repo_name}/actions/permissions/workflow"
@@ -291,9 +309,10 @@ class RustDeskAutoBuild:
             "can_approve_pull_request_reviews": True
         }
         
-        response = requests.put(url, headers=self.headers, json=data)
-        if response.status_code not in [200, 204]:
-            logger.warning(f"设置工作流权限失败: {response.status_code}")
+        try:
+            self._request("put", url, (200, 204), json=data)
+        except Exception as exc:
+            logger.warning(f"设置工作流权限失败: {exc}")
         
         logger.info("权限设置完成")
     
