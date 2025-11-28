@@ -1,0 +1,7 @@
+{
+    "github_token": "your_github_personal_access_token_here",
+    "github_username": "your_github_username",
+    "server_address": "your_server_ip_address",
+    "public_key": "your_public_key_here",
+    "dry_run": true
+}
